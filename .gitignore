@@ -1,0 +1,25 @@
+# Binary
+dispatch
+dispatch.exe
+
+# Data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Config with secrets
+dispatch.yaml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/

@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  dispatch:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dispatch.yaml:/etc/dispatch/dispatch.yaml:ro
+      - ./sites:/etc/dispatch/sites:ro
+      - ./shared:/etc/dispatch/shared:ro
+      - dispatch-data:/var/lib/dispatch
+    environment:
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+    restart: unless-stopped
+
+volumes:
+  dispatch-data:
