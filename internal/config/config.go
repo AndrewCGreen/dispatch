@@ -38,7 +38,9 @@ type DatabaseConfig struct {
 
 type AuthConfig struct {
 	MasterKey string `yaml:"master_key"`
+	SecretKey string `yaml:"secret_key"` // used for signing tokens; falls back to master_key
 }
+
 
 type QueueConfig struct {
 	Workers      int    `yaml:"workers"`
@@ -173,6 +175,15 @@ func loadSite(path string) (*SiteConfig, error) {
 	}
 
 	return &site, nil
+}
+
+// TokenSecret returns the secret used for signing tokens.
+// Falls back to the master key if no dedicated secret_key is configured.
+func (c *Config) TokenSecret() string {
+	if c.Auth.SecretKey != "" {
+		return c.Auth.SecretKey
+	}
+	return c.Auth.MasterKey
 }
 
 // GetSite returns the site config for a given slug, or an error if not found.

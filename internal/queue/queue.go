@@ -144,14 +144,22 @@ func (q *Queue) processOne(ctx context.Context, item store.QueueItem) error {
 		return fmt.Errorf("getting backend: %w", err)
 	}
 
-	// Build the outgoing message
-	// Note: In a full implementation, we'd load and render the template here.
-	// For now, the server handler pre-renders and stores subject/HTML in the message.
+	// Build the outgoing message from the stored rendered content.
 	outgoing := &backend.OutgoingMessage{
 		MessageID: msg.ID,
+		From:      msg.FromEmail,
+		FromName:  msg.FromName,
 		To:        msg.ToEmail,
 		Subject:   msg.Subject,
-		// HTML/Text would be loaded from a rendered cache or re-rendered here
+		HTML:      msg.HTMLBody,
+		Text:      msg.TextBody,
+	}
+
+	if msg.ListUnsubscribe != "" {
+		outgoing.Headers = map[string]string{
+			"List-Unsubscribe":      "<" + msg.ListUnsubscribe + ">",
+			"List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+		}
 	}
 
 	result, err := b.Send(ctx, outgoing)

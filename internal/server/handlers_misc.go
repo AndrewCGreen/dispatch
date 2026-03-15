@@ -13,6 +13,7 @@ import (
 
 	"github.com/dispatch-email/dispatch/internal/models"
 	tpl "github.com/dispatch-email/dispatch/internal/template"
+	"github.com/dispatch-email/dispatch/internal/token"
 )
 
 // --- Health ---
@@ -22,7 +23,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	backendHealth := s.backends.HealthAll(r.Context())
 
 	dbStatus := "ok"
-	if err := s.store.IsSuppressed(r.Context(), "healthcheck@dispatch.local"); err != nil {
+	if _, err := s.store.IsSuppressed(r.Context(), "healthcheck@dispatch.local"); err != nil {
 		dbStatus = fmt.Sprintf("error: %v", err)
 	}
 
@@ -45,32 +46,60 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // --- Unsubscribe ---
 
 func (s *Server) handleUnsubscribePage(w http.ResponseWriter, r *http.Request) {
-	// token := chi.URLParam(r, "token")
-	// TODO: decode token, show unsubscribe page
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html>
-<html><head><title>Unsubscribe</title></head>
-<body style="font-family:sans-serif;max-width:500px;margin:50px auto;text-align:center;">
+	tok := chi.URLParam(r, "token")
+	claims, err := s.tokens.Verify(tok)
+	if err != nil || claims.Type != token.TypeUnsubscribe {
+		writeHTMLPage(w, http.StatusBadRequest, "Invalid Link",
+			"<h1>Invalid or expired link</h1><p>This unsubscribe link is not valid.</p>")
+		return
+	}
+
+	writeHTMLPage(w, http.StatusOK, "Unsubscribe", fmt.Sprintf(`
 <h1>Unsubscribe</h1>
-<p>Click below to unsubscribe from this mailing list.</p>
+<p>Click below to unsubscribe <strong>%s</strong> from future emails.</p>
 <form method="POST">
-<button type="submit" style="padding:12px 24px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:16px;">
-Unsubscribe
-</button>
-</form>
-</body></html>`))
+  <button type="submit" style="padding:12px 24px;background:#dc2626;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:16px;">
+    Unsubscribe
+  </button>
+</form>`, claims.Email))
 }
 
 func (s *Server) handleUnsubscribeAction(w http.ResponseWriter, r *http.Request) {
-	// token := chi.URLParam(r, "token")
-	// TODO: decode token, process unsubscribe, add to suppression
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`<!DOCTYPE html>
-<html><head><title>Unsubscribed</title></head>
-<body style="font-family:sans-serif;max-width:500px;margin:50px auto;text-align:center;">
+	tok := chi.URLParam(r, "token")
+	claims, err := s.tokens.Verify(tok)
+	if err != nil || claims.Type != token.TypeUnsubscribe {
+		writeHTMLPage(w, http.StatusBadRequest, "Invalid Link",
+			"<h1>Invalid or expired link</h1><p>This unsubscribe link is not valid.</p>")
+		return
+	}
+
+	ctx := r.Context()
+
+	// Mark subscriber as unsubscribed (best-effort — may not exist as a subscriber)
+	s.store.UnsubscribeSubscriber(ctx, claims.Site, claims.Email)
+
+	// Add to global suppression
+	s.store.AddSuppression(ctx, &models.Suppression{
+		Email:  claims.Email,
+		Reason: models.ReasonUnsubscribe,
+		Note:   fmt.Sprintf("Unsubscribed via link from site %s", claims.Site),
+	})
+
+	// Log consent
+	if s.cfg.Compliance.ConsentLogging {
+		s.store.LogConsent(ctx, &models.ConsentRecord{
+			Email:  claims.Email,
+			Site:   claims.Site,
+			Action: models.ConsentUnsubscribe,
+			Source: "unsubscribe-link",
+			IP:     r.RemoteAddr,
+		})
+	}
+
+	writeHTMLPage(w, http.StatusOK, "Unsubscribed", fmt.Sprintf(`
 <h1>You've been unsubscribed</h1>
-<p>You won't receive any more emails from us.</p>
-</body></html>`))
+<p><strong>%s</strong> has been removed from our mailing list.</p>
+<p>You won't receive any more emails from us.</p>`, claims.Email))
 }
 
 // --- Templates ---
@@ -357,6 +386,16 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 		Message: message,
 		Code:    code,
 	})
+}
+
+func writeHTMLPage(w http.ResponseWriter, status int, title, body string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>%s</title></head>
+<body style="font-family:sans-serif;max-width:500px;margin:50px auto;text-align:center;">
+%s
+</body></html>`, title, body)
 }
 
 func queryInt(r *http.Request, key string, defaultVal int) int {

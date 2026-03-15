@@ -60,6 +60,14 @@ type Message struct {
 	DeliveredAt *time.Time      `json:"delivered_at,omitempty"`
 	BouncedAt   *time.Time      `json:"bounced_at,omitempty"`
 	FailedAt    *time.Time      `json:"failed_at,omitempty"`
+
+	// Delivery fields — populated by the send handler, consumed by the queue worker.
+	// Not exposed in API responses.
+	FromEmail      string `json:"-"`
+	FromName       string `json:"-"`
+	HTMLBody       string `json:"-"`
+	TextBody       string `json:"-"`
+	ListUnsubscribe string `json:"-"` // value for List-Unsubscribe header
 }
 
 // --- Suppression ---

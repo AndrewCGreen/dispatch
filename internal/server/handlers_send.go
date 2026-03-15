@@ -8,6 +8,7 @@ import (
 
 	"github.com/dispatch-email/dispatch/internal/models"
 	tpl "github.com/dispatch-email/dispatch/internal/template"
+	"github.com/dispatch-email/dispatch/internal/token"
 )
 
 // handleSend processes POST /api/v1/sites/{site}/send
@@ -50,15 +51,25 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate unsubscribe URL (no expiry — links must work indefinitely)
+	unsubTok, err := s.tokens.Generate(token.TypeUnsubscribe, req.To, site, 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "Failed to generate unsubscribe token")
+		return
+	}
+	unsubURL := s.cfg.Server.BaseURL + "/unsubscribe/" + unsubTok
+
 	// Render template
 	data := &tpl.TemplateData{
 		Data: req.Data,
 		Site: tpl.SiteInfo{
 			Name: siteCfg.Name,
+			URL:  s.cfg.Server.BaseURL,
 		},
 		Subscriber: tpl.SubscriberInfo{
 			Email: req.To,
 		},
+		UnsubscribeURL: unsubURL,
 	}
 
 	rendered, err := s.engine.Render(siteCfg.TemplatesPath(), req.Template, data)
@@ -72,13 +83,18 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 	meta, _ := json.Marshal(req.Metadata)
 
 	msg := &models.Message{
-		Site:     site,
-		ToEmail:  req.To,
-		Template: req.Template,
-		Subject:  rendered.Subject,
-		Backend:  siteCfg.Backend,
-		Tags:     tags,
-		Metadata: meta,
+		Site:            site,
+		ToEmail:         req.To,
+		FromEmail:       siteCfg.From,
+		FromName:        siteCfg.FromName,
+		Template:        req.Template,
+		Subject:         rendered.Subject,
+		HTMLBody:        rendered.HTML,
+		TextBody:        rendered.Text,
+		ListUnsubscribe: unsubURL,
+		Backend:         siteCfg.Backend,
+		Tags:            tags,
+		Metadata:        meta,
 	}
 
 	if err := s.store.CreateMessage(r.Context(), msg); err != nil {
@@ -130,10 +146,19 @@ func (s *Server) handleSendRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate unsubscribe URL
+	unsubTok, err := s.tokens.Generate(token.TypeUnsubscribe, req.To, site, 0)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "Failed to generate unsubscribe token")
+		return
+	}
+	unsubURL := s.cfg.Server.BaseURL + "/unsubscribe/" + unsubTok
+
 	// Render inline content with data substitution
 	data := &tpl.TemplateData{
-		Data: req.Data,
-		Site: tpl.SiteInfo{Name: siteCfg.Name},
+		Data:           req.Data,
+		Site:           tpl.SiteInfo{Name: siteCfg.Name, URL: s.cfg.Server.BaseURL},
+		UnsubscribeURL: unsubURL,
 	}
 	rendered, err := s.engine.RenderRaw(req.Subject, req.HTML, req.Text, data)
 	if err != nil {
@@ -141,13 +166,16 @@ func (s *Server) handleSendRaw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = rendered // Will be stored/used by queue worker
-
 	msg := &models.Message{
-		Site:    site,
-		ToEmail: req.To,
-		Subject: rendered.Subject,
-		Backend: siteCfg.Backend,
+		Site:            site,
+		ToEmail:         req.To,
+		FromEmail:       siteCfg.From,
+		FromName:        siteCfg.FromName,
+		Subject:         rendered.Subject,
+		HTMLBody:        rendered.HTML,
+		TextBody:        rendered.Text,
+		ListUnsubscribe: unsubURL,
+		Backend:         siteCfg.Backend,
 	}
 
 	if err := s.store.CreateMessage(r.Context(), msg); err != nil {

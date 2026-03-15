@@ -13,8 +13,9 @@ import (
 	"fmt"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3"
+
 	"github.com/dispatch-email/dispatch/internal/models"
 )
 
@@ -55,9 +56,25 @@ func (s *Store) Close() error {
 }
 
 // Migrate runs database migrations.
+// The main schema uses CREATE TABLE IF NOT EXISTS for new databases.
+// Additive ALTER TABLE statements handle columns added after initial deployment.
 func (s *Store) Migrate() error {
-	_, err := s.db.Exec(schema)
-	return err
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	// Additive migrations for existing databases — errors are ignored because
+	// SQLite returns an error when adding a column that already exists.
+	ctx := context.Background()
+	for _, col := range []struct{ name, typ string }{
+		{"from_email", "TEXT"},
+		{"from_name", "TEXT"},
+		{"html_body", "TEXT"},
+		{"text_body", "TEXT"},
+		{"list_unsubscribe", "TEXT"},
+	} {
+		s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE messages ADD COLUMN %s %s", col.name, col.typ))
+	}
+	return nil
 }
 
 const schema = `
@@ -101,22 +118,27 @@ CREATE TABLE IF NOT EXISTS suppressions (
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-    id           TEXT PRIMARY KEY,
-    site         TEXT NOT NULL,
-    to_email     TEXT NOT NULL,
-    template     TEXT,
-    subject      TEXT,
-    status       TEXT NOT NULL DEFAULT 'queued',
-    backend      TEXT,
-    backend_id   TEXT,
-    tags         TEXT,
-    metadata     TEXT,
-    error        TEXT,
-    queued_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    sent_at      TIMESTAMP,
-    delivered_at TIMESTAMP,
-    bounced_at   TIMESTAMP,
-    failed_at    TIMESTAMP
+    id               TEXT PRIMARY KEY,
+    site             TEXT NOT NULL,
+    to_email         TEXT NOT NULL,
+    from_email       TEXT,
+    from_name        TEXT,
+    template         TEXT,
+    subject          TEXT,
+    html_body        TEXT,
+    text_body        TEXT,
+    list_unsubscribe TEXT,
+    status           TEXT NOT NULL DEFAULT 'queued',
+    backend          TEXT,
+    backend_id       TEXT,
+    tags             TEXT,
+    metadata         TEXT,
+    error            TEXT,
+    queued_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    sent_at          TIMESTAMP,
+    delivered_at     TIMESTAMP,
+    bounced_at       TIMESTAMP,
+    failed_at        TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS send_queue (
@@ -314,10 +336,13 @@ func (s *Store) CreateMessage(ctx context.Context, msg *models.Message) error {
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO messages (id, site, to_email, template, subject, status, backend, tags, metadata, queued_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		msg.ID, msg.Site, msg.ToEmail, msg.Template, msg.Subject, msg.Status, msg.Backend,
-		string(tags), string(meta), msg.QueuedAt,
+		`INSERT INTO messages
+		 (id, site, to_email, from_email, from_name, template, subject, html_body, text_body,
+		  list_unsubscribe, status, backend, tags, metadata, queued_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		msg.ID, msg.Site, msg.ToEmail, msg.FromEmail, msg.FromName,
+		msg.Template, msg.Subject, msg.HTMLBody, msg.TextBody, msg.ListUnsubscribe,
+		msg.Status, msg.Backend, string(tags), string(meta), msg.QueuedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting message: %w", err)
@@ -339,12 +364,16 @@ func (s *Store) CreateMessage(ctx context.Context, msg *models.Message) error {
 func (s *Store) GetMessage(ctx context.Context, id string) (*models.Message, error) {
 	var msg models.Message
 	var tags, meta sql.NullString
+	var fromEmail, fromName, htmlBody, textBody, listUnsub sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, site, to_email, template, subject, status, backend, backend_id,
-		        tags, metadata, error, queued_at, sent_at, delivered_at, bounced_at, failed_at
+		`SELECT id, site, to_email, from_email, from_name, template, subject,
+		        html_body, text_body, list_unsubscribe,
+		        status, backend, backend_id, tags, metadata, error,
+		        queued_at, sent_at, delivered_at, bounced_at, failed_at
 		 FROM messages WHERE id = ?`, id,
-	).Scan(&msg.ID, &msg.Site, &msg.ToEmail, &msg.Template, &msg.Subject, &msg.Status,
-		&msg.Backend, &msg.BackendID, &tags, &meta, &msg.Error,
+	).Scan(&msg.ID, &msg.Site, &msg.ToEmail, &fromEmail, &fromName,
+		&msg.Template, &msg.Subject, &htmlBody, &textBody, &listUnsub,
+		&msg.Status, &msg.Backend, &msg.BackendID, &tags, &meta, &msg.Error,
 		&msg.QueuedAt, &msg.SentAt, &msg.DeliveredAt, &msg.BouncedAt, &msg.FailedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -358,7 +387,29 @@ func (s *Store) GetMessage(ctx context.Context, id string) (*models.Message, err
 	if meta.Valid {
 		msg.Metadata = json.RawMessage(meta.String)
 	}
+	msg.FromEmail = fromEmail.String
+	msg.FromName = fromName.String
+	msg.HTMLBody = htmlBody.String
+	msg.TextBody = textBody.String
+	msg.ListUnsubscribe = listUnsub.String
 	return &msg, nil
+}
+
+// UnsubscribeSubscriber marks a subscriber as unsubscribed.
+func (s *Store) UnsubscribeSubscriber(ctx context.Context, site, email string) error {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE subscribers SET status = 'unsubscribed', unsubscribed_at = ? WHERE site = ? AND email = ?",
+		now, site, email,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("subscriber not found")
+	}
+	return nil
 }
 
 // --- Consent Operations ---

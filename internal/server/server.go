@@ -26,16 +26,18 @@ import (
 	"github.com/dispatch-email/dispatch/internal/queue"
 	"github.com/dispatch-email/dispatch/internal/store"
 	tpl "github.com/dispatch-email/dispatch/internal/template"
+	"github.com/dispatch-email/dispatch/internal/token"
 )
 
 // Server holds all dependencies for the HTTP server.
 type Server struct {
-	cfg      *config.Config
-	store    *store.Store
-	backends *backend.Router
-	queue    *queue.Queue
-	logger   *slog.Logger
-	engine   *tpl.Engine
+	cfg       *config.Config
+	store     *store.Store
+	backends  *backend.Router
+	queue     *queue.Queue
+	logger    *slog.Logger
+	engine    *tpl.Engine
+	tokens    *token.Manager
 	startedAt time.Time
 }
 
@@ -48,6 +50,7 @@ func New(cfg *config.Config, store *store.Store, backends *backend.Router, q *qu
 		queue:     q,
 		logger:    logger,
 		engine:    tpl.New("shared/templates"),
+		tokens:    token.New(cfg.TokenSecret()),
 		startedAt: time.Now(),
 	}
 }
