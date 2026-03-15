@@ -41,6 +41,9 @@ func New(driver, dsn string) (*Store, error) {
 
 	// SQLite optimizations
 	if driver == "sqlite3" {
+		// Single connection prevents "database is locked" errors — SQLite only
+		// supports one concurrent writer, so serializing at the pool level is correct.
+		db.SetMaxOpenConns(1)
 		db.Exec("PRAGMA journal_mode=WAL")
 		db.Exec("PRAGMA busy_timeout=5000")
 		db.Exec("PRAGMA synchronous=NORMAL")
@@ -363,8 +366,11 @@ func (s *Store) CreateMessage(ctx context.Context, msg *models.Message) error {
 // GetMessage retrieves a message by ID.
 func (s *Store) GetMessage(ctx context.Context, id string) (*models.Message, error) {
 	var msg models.Message
+	var fromEmail, fromName, template, subject sql.NullString
+	var htmlBody, textBody, listUnsub sql.NullString
+	var backend, backendID, msgError sql.NullString
 	var tags, meta sql.NullString
-	var fromEmail, fromName, htmlBody, textBody, listUnsub sql.NullString
+
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, site, to_email, from_email, from_name, template, subject,
 		        html_body, text_body, list_unsubscribe,
@@ -372,8 +378,8 @@ func (s *Store) GetMessage(ctx context.Context, id string) (*models.Message, err
 		        queued_at, sent_at, delivered_at, bounced_at, failed_at
 		 FROM messages WHERE id = ?`, id,
 	).Scan(&msg.ID, &msg.Site, &msg.ToEmail, &fromEmail, &fromName,
-		&msg.Template, &msg.Subject, &htmlBody, &textBody, &listUnsub,
-		&msg.Status, &msg.Backend, &msg.BackendID, &tags, &meta, &msg.Error,
+		&template, &subject, &htmlBody, &textBody, &listUnsub,
+		&msg.Status, &backend, &backendID, &tags, &meta, &msgError,
 		&msg.QueuedAt, &msg.SentAt, &msg.DeliveredAt, &msg.BouncedAt, &msg.FailedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -381,18 +387,41 @@ func (s *Store) GetMessage(ctx context.Context, id string) (*models.Message, err
 	if err != nil {
 		return nil, err
 	}
+
+	msg.FromEmail = fromEmail.String
+	msg.FromName = fromName.String
+	msg.Template = template.String
+	msg.Subject = subject.String
+	msg.HTMLBody = htmlBody.String
+	msg.TextBody = textBody.String
+	msg.ListUnsubscribe = listUnsub.String
+	msg.Backend = backend.String
+	msg.BackendID = backendID.String
+	msg.Error = msgError.String
 	if tags.Valid {
 		msg.Tags = json.RawMessage(tags.String)
 	}
 	if meta.Valid {
 		msg.Metadata = json.RawMessage(meta.String)
 	}
-	msg.FromEmail = fromEmail.String
-	msg.FromName = fromName.String
-	msg.HTMLBody = htmlBody.String
-	msg.TextBody = textBody.String
-	msg.ListUnsubscribe = listUnsub.String
 	return &msg, nil
+}
+
+// ConfirmSubscriber activates a pending subscriber after double opt-in confirmation.
+func (s *Store) ConfirmSubscriber(ctx context.Context, site, email string) error {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE subscribers SET status = 'active', confirmed_at = ? WHERE site = ? AND email = ? AND status = 'pending'",
+		now, site, email,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("subscriber not found or already confirmed")
+	}
+	return nil
 }
 
 // UnsubscribeSubscriber marks a subscriber as unsubscribed.

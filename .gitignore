@@ -11,6 +11,10 @@ data/
 # Config with secrets
 dispatch.yaml
 
+# Runtime-generated directories (created by dispatch init / site add)
+sites/
+shared/
+
 # IDE
 .idea/
 .vscode/

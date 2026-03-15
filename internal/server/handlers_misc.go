@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -100,6 +101,53 @@ func (s *Server) handleUnsubscribeAction(w http.ResponseWriter, r *http.Request)
 <h1>You've been unsubscribed</h1>
 <p><strong>%s</strong> has been removed from our mailing list.</p>
 <p>You won't receive any more emails from us.</p>`, claims.Email))
+}
+
+// --- Double Opt-In Confirmation ---
+
+func (s *Server) handleConfirm(w http.ResponseWriter, r *http.Request) {
+	tok := chi.URLParam(r, "token")
+	claims, err := s.tokens.Verify(tok)
+	if err != nil || claims.Type != token.TypeConfirm {
+		writeHTMLPage(w, http.StatusBadRequest, "Invalid Link",
+			"<h1>Invalid or expired link</h1><p>This confirmation link is not valid or has expired. Please subscribe again to receive a new one.</p>")
+		return
+	}
+
+	ctx := r.Context()
+
+	if err := s.store.ConfirmSubscriber(ctx, claims.Site, claims.Email); err != nil {
+		// Already confirmed is not an error worth showing as a failure
+		writeHTMLPage(w, http.StatusOK, "Already Confirmed",
+			fmt.Sprintf("<h1>Already confirmed</h1><p><strong>%s</strong> is already subscribed and active.</p>", claims.Email))
+		return
+	}
+
+	// Log consent confirmation
+	if s.cfg.Compliance.ConsentLogging {
+		s.store.LogConsent(ctx, &models.ConsentRecord{
+			Email:  claims.Email,
+			Site:   claims.Site,
+			Action: models.ConsentSubscribe,
+			Source: "double-optin-confirm",
+			IP:     r.RemoteAddr,
+		})
+	}
+
+	// Send welcome email if configured
+	siteCfg, _ := s.cfg.GetSite(claims.Site)
+	if siteCfg != nil && siteCfg.WelcomeTpl != "" {
+		if err := s.queueEmail(ctx, claims.Site, claims.Email, siteCfg.WelcomeTpl, map[string]any{
+			"name": "",
+		}); err != nil {
+			slog.Error("failed to queue welcome email", "email", claims.Email, "error", err)
+		}
+	}
+
+	writeHTMLPage(w, http.StatusOK, "Confirmed!", fmt.Sprintf(`
+<h1>You're confirmed!</h1>
+<p><strong>%s</strong> has been successfully subscribed.</p>
+<p>Thanks for confirming your email address.</p>`, claims.Email))
 }
 
 // --- Templates ---

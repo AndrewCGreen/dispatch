@@ -2,11 +2,14 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/dispatch-email/dispatch/internal/models"
+	"github.com/dispatch-email/dispatch/internal/token"
 )
 
 func (s *Server) handleSubscriberCreate(w http.ResponseWriter, r *http.Request) {
@@ -81,14 +84,32 @@ func (s *Server) handleSubscriberCreate(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	// TODO: if double optin, send confirmation email
+	confirmSent := false
+	if siteCfg.DoubleOptin && siteCfg.OptinTpl != "" {
+		// Generate a confirmation token with a 72-hour TTL
+		confirmTok, err := s.tokens.Generate(token.TypeConfirm, req.Email, site, 72*time.Hour)
+		if err != nil {
+			slog.Error("failed to generate confirm token", "email", req.Email, "error", err)
+		} else {
+			confirmURL := s.cfg.Server.BaseURL + "/confirm/" + confirmTok
+			err = s.queueEmail(r.Context(), site, req.Email, siteCfg.OptinTpl, map[string]any{
+				"confirm_url": confirmURL,
+				"name":        req.Name,
+			})
+			if err != nil {
+				slog.Error("failed to queue optin email", "email", req.Email, "error", err)
+			} else {
+				confirmSent = true
+			}
+		}
+	}
 
 	resp := map[string]any{
 		"email":  sub.Email,
 		"status": sub.Status,
 	}
 	if siteCfg.DoubleOptin {
-		resp["confirm_sent"] = true
+		resp["confirm_sent"] = confirmSent
 		resp["message"] = "Double opt-in confirmation sent"
 	}
 
