@@ -11,7 +11,7 @@ One service. Many sites. Pluggable backends. GDPR built in.
 Dispatch sits between your web applications and email delivery. Instead of configuring email for every site, you configure it once:
 
 ```
-Your Sites → Dispatch API → SMTP / Resend / SES / Listmonk
+Your Sites → Dispatch API (with auto footer) → SMTP / Resend / SES / Listmonk
 ```
 
 - **Multi-site** — one instance serves all your projects

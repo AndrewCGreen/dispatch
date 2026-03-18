@@ -11,11 +11,21 @@ slug: my-game
 name: "My Awesome Game"
 from: game@example.com
 from_name: "My Game"
+
+# Use any backend: smtp, resend, ses (future), etc.
 backend: resend
 backend_config:
   api_key: "${RESEND_API_KEY}"
 
-# Configure the unsubscribe footer
+# Or use SMTP:
+# backend: smtp
+# backend_config:
+#   host: smtp.gmail.com
+#   port: 587
+#   username: "${SMTP_USER}"
+#   password: "${SMTP_PASS}"
+
+# Configure the unsubscribe footer (works with ANY backend)
 unsubscribe_footer:
   enabled: true
   # Customize the text (optional - has sensible defaults)
@@ -25,6 +35,8 @@ unsubscribe_footer:
   # - {unsubscribe_url}: Unsubscribe URL
   # - {recipient_email}: Recipient's email address
 ```
+
+**Note:** The unsubscribe footer feature works with **all backends** (SMTP, Resend, SES, etc.). The footer is added when the email is received via the API, before it reaches your configured backend.
 
 ## Sending Emails from Your Service
 
