@@ -6,7 +6,8 @@
 //   - Directory-based: sites/{site}/templates/welcome/{subject.txt, body.html, body.txt}
 //
 // The subject line is extracted from a Go template comment in single-file templates:
-//   {{/* subject: Your subject here */}}
+//
+//	{{/* subject: Your subject here */}}
 //
 // Base templates (files prefixed with _) provide shared layouts that other
 // templates can inherit via Go's template block/define mechanism.
@@ -179,6 +180,45 @@ func (e *Engine) RenderRaw(subject, html, text string, data *TemplateData) (*Ren
 	}
 
 	return result, nil
+}
+
+// WrapEmailData holds data for the email wrapper template.
+type WrapEmailData struct {
+	Subject    string
+	Content    string
+	FooterText string
+}
+
+// WrapWithLayout wraps raw HTML content in the email base template.
+// It adds responsive layout and the unsubscribe footer.
+func (e *Engine) WrapWithLayout(contentHTML, footerText, subject string) (string, error) {
+	// Load the email base template
+	basePath := filepath.Join(e.sharedDir, "_email_base.html")
+	baseContent, err := os.ReadFile(basePath)
+	if err != nil {
+		return "", fmt.Errorf("reading email base template: %w", err)
+	}
+
+	// Parse the base template
+	tmpl, err := template.New("email_base").Parse(string(baseContent))
+	if err != nil {
+		return "", fmt.Errorf("parsing email base template: %w", err)
+	}
+
+	// Prepare data for the template
+	data := WrapEmailData{
+		Subject:    subject,
+		Content:    contentHTML,
+		FooterText: footerText,
+	}
+
+	// Execute the template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("executing email wrapper: %w", err)
+	}
+
+	return buf.String(), nil
 }
 
 // extractSubject pulls the subject from a Go template comment.

@@ -41,7 +41,6 @@ type AuthConfig struct {
 	SecretKey string `yaml:"secret_key"` // used for signing tokens; falls back to master_key
 }
 
-
 type QueueConfig struct {
 	Workers      int    `yaml:"workers"`
 	RetryMax     int    `yaml:"retry_max"`
@@ -76,8 +75,18 @@ type SiteConfig struct {
 	Tags        []string          `yaml:"tags"`
 	Lists       []ListConfig      `yaml:"lists"`
 
+	// Unsubscribe footer configuration for /send/raw
+	UnsubscribeFooter FooterConfig `yaml:"unsubscribe_footer"`
+
 	// Resolved at load time
 	BasePath string `yaml:"-"`
+}
+
+// FooterConfig holds unsubscribe footer settings.
+type FooterConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Text     string `yaml:"text"`     // Template text with {site_name}, {unsubscribe_url}, {recipient_email}
+	Template string `yaml:"template"` // Optional: path to custom footer template file
 }
 
 type ListConfig struct {
@@ -204,4 +213,21 @@ func (s *SiteConfig) TemplatesPath() string {
 		return s.TemplateDir
 	}
 	return filepath.Join(s.BasePath, s.TemplateDir)
+}
+
+// GetFooterText returns the footer text template for a site.
+// Falls back to default if not configured or if enabled is false.
+func (s *SiteConfig) GetFooterText() string {
+	if s.UnsubscribeFooter.Text != "" {
+		return s.UnsubscribeFooter.Text
+	}
+	return "To stop receiving emails from {site_name}, click here to unsubscribe: {unsubscribe_url}"
+}
+
+// FooterEnabled returns whether the unsubscribe footer is enabled.
+// Defaults to true if not explicitly set to false.
+func (s *SiteConfig) FooterEnabled() bool {
+	// If the struct was explicitly configured, use that value
+	// Otherwise default to enabled
+	return s.UnsubscribeFooter.Enabled || s.UnsubscribeFooter.Text != ""
 }

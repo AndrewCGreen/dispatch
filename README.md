@@ -85,6 +85,36 @@ dispatch/
 
 See [SPEC.md](SPEC.md) for the full API specification.
 
+### Send with Pre-Rendered HTML
+
+Send emails with your own HTML templates - Dispatch wraps them in a responsive layout with automatic unsubscribe footer:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/sites/my-site/send/raw \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "to": "user@example.com",
+    "subject": "Your Daily Reminder",
+    "html": "<h1>Time to play!</h1><p>Your daily reminder...</p>",
+    "data": { "name": "PlayerOne" }
+  }'
+```
+
+**Features:**
+- Services send raw HTML - no template migration needed
+- Dispatch automatically wraps emails in responsive layout
+- Configurable unsubscribe footer added to all emails (per-site)
+- Plain text version auto-generated with footer included
+
+**Configure Footer in `sites/my-site/site.yaml`:**
+```yaml
+unsubscribe_footer:
+  enabled: true
+  text: "To stop receiving emails from {site_name}, click here: {unsubscribe_url}"
+  # Available variables: {site_name}, {unsubscribe_url}, {recipient_email}
+```
+
 ### Core Endpoints
 
 | Method | Path | Description |

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -164,6 +165,30 @@ func (s *Server) handleSendRaw(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "RENDER_ERROR", err.Error())
 		return
+	}
+
+	// Wrap with email layout and add unsubscribe footer if enabled
+	if siteCfg.FooterEnabled() {
+		// Build footer text with variable substitution
+		footerText := siteCfg.GetFooterText()
+		footerText = strings.ReplaceAll(footerText, "{site_name}", siteCfg.Name)
+		footerText = strings.ReplaceAll(footerText, "{unsubscribe_url}", unsubURL)
+		footerText = strings.ReplaceAll(footerText, "{recipient_email}", req.To)
+
+		// Convert plain text footer to HTML link
+		footerHTML := strings.Replace(footerText, unsubURL, `<a href="`+unsubURL+`">unsubscribe</a>`, 1)
+
+		// Wrap the content in the email layout
+		wrappedHTML, err := s.engine.WrapWithLayout(rendered.HTML, footerHTML, rendered.Subject)
+		if err != nil {
+			// Log error but don't fail - send without wrapping
+			s.logger.Error("failed to wrap email with layout", "error", err, "site", site)
+		} else {
+			rendered.HTML = wrappedHTML
+		}
+
+		// Add footer to plain text version too
+		rendered.Text = rendered.Text + "\n\n---\n" + footerText
 	}
 
 	msg := &models.Message{
